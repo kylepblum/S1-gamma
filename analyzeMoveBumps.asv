@@ -1,0 +1,695 @@
+%% load & process TD file
+pathname = 'C:\Users\kpb8927\data\td-library';
+filename = 'Duncan_20190524_CObumpmove_10ms.mat';
+load([pathname filesep filename]);
+
+% Smooth spikes, get split TD, get movement onsets, get rid of unsorted units
+
+%Smooth spikes
+smoothParams.signals = {'S1_spikes'};
+smoothParams.width = 0.03;
+smoothParams.calc_rate = true;
+td = smoothSignals(trial_data,smoothParams);
+
+%Get speed
+td.speed = sqrt(td.vel(:,1).^2 + td.vel(:,2).^2);
+
+%Remove offset
+td.pos(:,1) = td.pos(:,1)+0;
+td.pos(:,2) = td.pos(:,2)+32;
+%Get rid of unsorted units
+sorted_idx = find(td.S1_unit_guide(:,2)~=0);
+td.S1_spikes = td.S1_spikes(:,sorted_idx);
+td.S1_unit_guide = td.S1_unit_guide(sorted_idx,:);
+
+%Split TD
+splitParams.split_idx_name = 'idx_startTime';
+splitParams.linked_fields = {'result','bumpDir','tgtDir'};
+td = splitTD(td,splitParams);
+
+%Get movement onset
+moveOnsetParams.start_idx = 'idx_startTime';
+moveOnsetParams.end_idx = 'idx_endTime';
+td = getMoveOnsetAndPeak(td,moveOnsetParams);
+
+% Separate TD into bump, act, and comb structures
+
+% Get bump-move trials
+td_temp = [];
+for i = 1:numel(td)
+    if ~isnan(td(i).idx_movement_on) && ~isnan(td(i).bumpDir) && td(i).idx_bumpTime > td(i).idx_goCueTime
+        if strcmp(td(i).result,'R') || strcmp(td(i).result,'F')
+            if isempty(td_temp)
+                td_temp = td(i);
+            else
+                td_temp = [td_temp; td(i)];
+            end
+        end
+    end
+end
+
+td_comb = td_temp;
+
+% Get bump-only trials
+td_temp = [];
+for i = 1:numel(td)
+    if ~isnan(td(i).idx_movement_on) && ~isnan(td(i).bumpDir) && td(i).idx_bumpTime < td(i).idx_goCueTime
+        if strcmp(td(i).result,'R') || strcmp(td(i).result,'F')
+            if isempty(td_temp)
+                td_temp = td(i);
+            else
+                td_temp = [td_temp; td(i)];
+            end
+        end
+    end
+end
+
+td_bump = td_temp; %td bump
+
+% Get non-bump trials
+td_temp = [];
+for i = 1:numel(td)
+    if ~isnan(td(i).idx_movement_on) && isnan(td(i).bumpDir)
+        if strcmp(td(i).result,'R') && ~isnan(td(i).idx_goCueTime)
+            if isempty(td_temp)
+                td_temp = td(i);
+            else
+                td_temp = [td_temp; td(i)];
+            end
+        end
+    end
+end
+td_act = td_temp; %td non-bump
+
+
+
+%% Plot firing rates and trajectory for move-bumps
+
+tgtDirs = 0:45:315;
+relBumpDirs = 0:90:270;
+numTgt = numel(tgtDirs);
+numBump = numel(relBumpDirs);
+numCond = numTgt*numBump;
+
+meanFR_comb = [];
+
+for neuron2plot = 36 %36 40
+    clear FR
+    FR(numel(tgtDirs),numel(relBumpDirs)) = struct();
+    FR(1,1).rate = [];
+    ratefig = figure;
+    i = 0;
+    j = 0;
+    for rd = tgtDirs
+        i = i+1;
+        j = 0;
+        for rbd = relBumpDirs
+            j = j+1;
+            for trial = 1:numel(td_comb)
+                plotStartIdx = td_comb(trial).idx_bumpTime-2;
+                plotStopIdx = td_comb(trial).idx_bumpTime+12;
+                absBumpDir = td_comb(trial).bumpDir;
+                relBumpDir = td_comb(trial).bumpDir - td_comb(trial).tgtDir;
+                
+                if relBumpDir < 0
+                    relBumpDir = relBumpDir + 360;
+                end
+                if td_comb(trial).tgtDir == rd && relBumpDir == rbd
+                    set(0,'CurrentFigure',ratefig)
+                    set(gcf,'visible','off')
+                    subplot(numTgt,numBump,(i-1)*(numBump)+j); hold on;
+                    axis([-2 12 0 50])
+                    FR(i,j).rate(end+1,:) = td_comb(trial).S1_spikes(plotStartIdx:plotStopIdx,neuron2plot);
+                    plot(-2:12,squeeze(FR(i,j).rate(end,:)),'color',[0.9 0.9 1])
+                    % Formatting
+                    set(gca,'TickDir','out','clipping','off')
+                    if j ~= 1
+                        set(gca,'yticklabel',[])
+                    else
+                        ylabel(num2str(rd))
+                    end
+                    if i ~= numTgt
+                        set(gca,'xticklabel',[])
+                    end
+                    if i == 1
+                        title(num2str(rbd))
+                    end
+                end
+            end
+            meanFR = [];
+            meanFR = mean(FR(i,j).rate);
+            set(0,'CurrentFigure',ratefig)
+            plot(-2:12,squeeze(meanFR),'linewidth',2,'color',[0 0 1])
+            
+            meanFR_comb(i,j,:) = meanFR;
+        end
+    end
+    set(ratefig,'visible','on')
+end
+
+kinfig = figure;
+i = 0;
+j = 0;
+for rd = tgtDirs
+    i = i+1;
+    j = 0;
+    for rbd = relBumpDirs
+        j = j+1;
+        for trial = 1:numel(td_comb)
+            plotStartIdx = td_comb(trial).idx_bumpTime-2;
+            plotStopIdx = td_comb(trial).idx_bumpTime+12;
+            absBumpDir = td_comb(trial).bumpDir;
+            relBumpDir = absBumpDir - td_comb(trial).tgtDir;
+            if relBumpDir < 0
+                relBumpDir = relBumpDir + 360;
+            end
+            if td_comb(trial).tgtDir == rd && relBumpDir == rbd
+                set(0,'CurrentFigure',kinfig)
+                set(gcf,'visible','on')
+                subplot(numTgt,numBump,(i-1)*(numBump)+j); hold on;
+                axis([-10 10 -10 10])
+                [targX,targY] = pol2cart(deg2rad(rd),9);
+                plot(targX,targY,'ko','MarkerFaceColor','k','markersize',5);
+                % Get movement directions and colors set up
+                velX = td_comb(trial).vel(plotStartIdx:plotStopIdx,1);
+                velY = td_comb(trial).vel(plotStartIdx:plotStopIdx,2);
+                traj = atan2(velY,velX);
+                traj = rad2deg(traj);
+                trajColorMap = [1 0 0; 0.0 0.5 1; 1 0 0];
+                x = linspace(-180,179.9999,3);
+                xq = td_comb(trial).tgtDir - traj;
+                xq(xq<-180) = xq(xq<-180) + 360;
+                xq(xq>180) = xq(xq>180) - 360;
+                v = trajColorMap;
+                vq = interp1(x,v,xq);
+                idxStart = td_comb(trial).idx_goCueTime;
+                plot(td_comb(trial).pos(idxStart:plotStartIdx,1),td_comb(trial).pos(idxStart:plotStartIdx,2),'.','markersize',6,'color',[0.9 0.9 0.9])
+                for t = 1:numel(traj)
+                    plot(td_comb(trial).pos(plotStartIdx+t,1),td_comb(trial).pos(plotStartIdx+t,2),'.','markersize',6,'color',vq(t,:)), hold on
+                end
+                % Formating
+                set(gca,'TickDir','out','clipping','off')
+                if j ~= 1
+                    set(gca,'yticklabel',[])
+                else
+                    ylabel(num2str(rd))
+                end
+                if i ~= numTgt
+                    set(gca,'xticklabel',[])
+                end
+                if i == 1
+                    title(num2str(rbd))
+                end
+            end
+        end
+    end
+end
+
+%% Plot bump-only trials
+
+relBumpDirs = 0:45:315;
+tgtDirs = 1;
+numTgt = numel(tgtDirs);
+numBump = numel(relBumpDirs);
+numCond = numTgt*numBump;
+
+meanFR_bump = [];
+
+for neuron2plot = [36] %36 40
+    clear FR
+    FR(numel(tgtDirs),numel(relBumpDirs)) = struct();
+    FR(1,1).rate = [];
+    ratefig = figure;
+    i = 1;
+    j = 0;
+    for rbd = relBumpDirs
+        j = j+1;
+        for trial = 1:numel(td_bump)
+            plotStartIdx = td_bump(trial).idx_bumpTime-2;
+            plotStopIdx = td_bump(trial).idx_bumpTime+12;
+            absBumpDir = td_bump(trial).bumpDir;
+            relBumpDir = td_bump(trial).bumpDir; %Don't care about the target dir for passive
+            
+            if relBumpDir < 0
+                relBumpDir = relBumpDir + 360;
+            end
+            if relBumpDir >= 360
+                relBumpDir = relBumpDir - 360;
+            end
+            
+            if relBumpDir == rbd
+                set(0,'CurrentFigure',ratefig)
+                set(gcf,'visible','off')
+                subplot(numTgt,numBump,(i-1)*(numBump)+j); hold on;
+                axis([-2 12 0 50])
+                FR(i,j).rate(end+1,:) = td_bump(trial).S1_spikes(plotStartIdx:plotStopIdx,neuron2plot);
+                plot(-2:12,squeeze(FR(i,j).rate(end,:)),'color',[0.9 0.9 1])
+                % Formatting
+                set(gca,'TickDir','out','clipping','off')
+                if j ~= 1
+                    set(gca,'yticklabel',[])
+                else
+                    ylabel('Bumps')
+                end
+                if i ~= numTgt
+                    set(gca,'xticklabel',[])
+                end
+                if i == 1
+                    title(num2str(rbd))
+                end
+            end
+        end
+        meanFR = [];
+        meanFR = mean(FR(i,j).rate);
+        set(0,'CurrentFigure',ratefig)
+        plot(-2:12,squeeze(meanFR),'linewidth',2,'color',[0 0 1])
+        
+        meanFR_bump(i,j,:) = meanFR;
+    end
+    set(ratefig,'visible','on')
+end
+
+
+kinfig = figure;
+i = 1;
+j = 0;
+
+for rbd = relBumpDirs
+    j = j+1;
+    for trial = 1:numel(td_bump)
+        plotStartIdx = td_bump(trial).idx_bumpTime-2;
+        plotStopIdx = td_bump(trial).idx_bumpTime+12;
+        absBumpDir = td_bump(trial).bumpDir;
+        relBumpDir = absBumpDir;
+        
+        if relBumpDir < 0
+            relBumpDir = relBumpDir + 360;
+        end
+        if relBumpDir >= 360
+            relBumpDir = relBumpDir - 360;
+        end
+        
+        if relBumpDir == rbd
+            set(0,'CurrentFigure',kinfig)
+            set(gcf,'visible','on')
+            subplot(numTgt,numBump,(i-1)*(numBump)+j); hold on;
+            axis([-10 10 -10 10])
+            % Get movement directions and colors set up
+            velX = td_bump(trial).vel(plotStartIdx:plotStopIdx,1);
+            velY = td_bump(trial).vel(plotStartIdx:plotStopIdx,2);
+            traj = atan2(velY,velX);
+            traj = rad2deg(traj);
+            trajColorMap = [1 0 0; 0.0 0.5 1; 1 0 0];
+            x = linspace(-180,179.9999,3);
+            xq = relBumpDir - traj;
+            xq(xq<-180) = xq(xq<-180) + 360;
+            xq(xq>180) = xq(xq>180) - 360;
+            v = trajColorMap;
+            vq = interp1(x,v,xq);
+            idxStart = td_bump(trial).idx_goCueTime;
+            plot(td_bump(trial).pos(idxStart:plotStartIdx,1),td_bump(trial).pos(idxStart:plotStartIdx,2),'.','markersize',6,'color',[0.9 0.9 0.9])
+            for t = 1:numel(traj)
+                plot(td_bump(trial).pos(plotStartIdx+t,1),td_bump(trial).pos(plotStartIdx+t,2),'.','markersize',6,'color',vq(t,:)), hold on
+            end
+            % Formating
+            set(gca,'TickDir','out','clipping','off')
+            if j ~= 1
+                set(gca,'yticklabel',[])
+            else
+                ylabel(num2str(rbd))
+            end
+            if i ~= numTgt
+                set(gca,'xticklabel',[])
+            end
+            if i == 1
+                title(num2str(rbd))
+            end
+        end
+    end
+end
+
+%% Plot non-bump trials
+relBumpDirs = 1;
+tgtDirs = 0:45:315;
+numTgt = numel(tgtDirs);
+numBump = numel(relBumpDirs);
+numCond = numTgt*numBump;
+
+meanFR_act = [];
+
+for neuron2plot = 13 %36 40
+    clear FR
+    FR(numel(tgtDirs),numel(relBumpDirs)) = struct();
+    FR(1,1).rate = [];
+    ratefig = figure;
+    i = 0;
+    j = 1;
+    for rd = tgtDirs
+        i = i+1;
+        for trial = 1:numel(td_act)
+            plotStartIdx = td_act(trial).idx_goCueTime+16;
+            plotStopIdx = td_act(trial).idx_goCueTime+30;
+            absBumpDir = td_act(trial).bumpDir;
+            tgtDir = td_act(trial).tgtDir; %Don't care about the target dir for passive
+            
+            if tgtDir < 0
+                tgtDir = tgtDir + 360;
+            end
+            if tgtDir >= 360
+                tgtDir = tgtDir - 360;
+            end
+            
+            if tgtDir == rd
+                set(0,'CurrentFigure',ratefig)
+                set(gcf,'visible','off')
+                subplot(numTgt,numBump,(i-1)*(numBump)+j); hold on;
+                axis([-2 12 0 50])
+                FR(i,j).rate(end+1,:) = td_act(trial).S1_spikes(plotStartIdx:plotStopIdx,neuron2plot);
+                plot(-2:12,squeeze(FR(i,j).rate(end,:)),'color',[0.9 0.9 1])
+                % Formatting
+                set(gca,'TickDir','out','clipping','off')
+                if j ~= 1
+                    set(gca,'yticklabel',[])
+                else
+                    ylabel('Reaches')
+                end
+                if i ~= numTgt
+                    set(gca,'xticklabel',[])
+                end
+                if i == 1
+                    title(num2str(rd))
+                end
+            end
+        end
+        meanFR = [];
+        meanFR = mean(FR(i,j).rate);
+        set(0,'CurrentFigure',ratefig)
+        plot(-2:12,squeeze(meanFR),'linewidth',2,'color',[0 0 1])
+        
+        meanFR_act(i,j,:) = meanFR;
+    end
+end
+set(ratefig,'visible','on')
+
+
+kinfig = figure;
+i = 0;
+j = 1;
+
+for rd = tgtDirs
+    i = i+1;
+    for trial = 1:numel(td_act)
+        plotStartIdx = td_act(trial).idx_goCueTime+16;
+        plotStopIdx = td_act(trial).idx_goCueTime+30;
+        tgtDir = td_act(trial).tgtDir;
+
+        
+
+        
+        if tgtDir == rd
+            set(0,'CurrentFigure',kinfig)
+            set(gcf,'visible','on')
+            subplot(numTgt,numBump,(i-1)*(numBump)+j); hold on;
+            axis([-10 10 -10 10])
+            [targX,targY] = pol2cart(deg2rad(rd),9);
+            plot(targX,targY,'ko','MarkerFaceColor','k','markersize',5);
+            % Get movement directions and colors set up
+            velX = td_act(trial).vel(plotStartIdx:plotStopIdx,1);
+            velY = td_act(trial).vel(plotStartIdx:plotStopIdx,2);
+            traj = atan2(velY,velX);
+            traj = rad2deg(traj);
+            trajColorMap = [1 0 0; 0.0 0.5 1; 1 0 0];
+            x = linspace(-180,179.9999,3);
+            xq = td_act(trial).tgtDir - traj;
+            xq(xq<-180) = xq(xq<-180) + 360;
+            xq(xq>180) = xq(xq>180) - 360;
+            v = trajColorMap;
+            vq = interp1(x,v,xq);
+            idxStart = td_act(trial).idx_goCueTime;
+            plot(td_act(trial).pos(idxStart:plotStartIdx,1),td_act(trial).pos(idxStart:plotStartIdx,2),'.','markersize',6,'color',[0.9 0.9 0.9])
+            for t = 1:numel(traj)
+                plot(td_act(trial).pos(plotStartIdx+t,1),td_act(trial).pos(plotStartIdx+t,2),'.','markersize',6,'color',vq(t,:)), hold on
+            end
+            % Formating
+            set(gca,'TickDir','out','clipping','off')
+            if j ~= 1
+                set(gca,'yticklabel',[])
+            else
+                ylabel(num2str(rd))
+            end
+            if i ~= numTgt
+                set(gca,'xticklabel',[])
+            end
+            if i == 1
+                title(num2str(rd))
+            end
+        end
+    end
+end
+
+%% Predict bump-move S1 firing rates from bump and act firing rates
+
+rd = 0:45:315;
+bd = 0:45:315;
+for i = 1:numel(rd)
+    bumpIdx = i:2:i+6;
+    bumpIdx(bumpIdx>8) = bumpIdx(bumpIdx>8) - 8;
+    reorderedFRbump(i,:,:) = meanFR_bump(:,bumpIdx,:);
+end
+
+reorderedFRact = cat(2,meanFR_act,meanFR_act,meanFR_act,meanFR_act);
+FR_pred = reorderedFRbump + (reorderedFRact - mean(reorderedFRact,3));
+
+for i = 1:8
+    for j = 1:4
+        subplot(8,4,(i-1)*(4)+j); hold on; 
+        set(gca,'clipping','off')
+        axis([-2 12 0 50])
+        plot(-2:12,squeeze(FR_pred(i,j,:)))
+        plot(-2:12,squeeze(reorderedFRbump(i,j,:)))
+        plot(-2:12,squeeze(reorderedFRact(i,j,:)))
+    end 
+end
+
+
+
+
+%% Prep TDs for encoding/decoding models
+modelNames = {'act','pas','comb'};
+
+srParams.powers = [0.5];
+srParams.signals = {'vel'};
+td_act = getPowerTD(td_act,srParams);
+
+
+for i = 1:numel(td_act)
+    idx = td_act(i).idx_movement_on+16:td_act(i).idx_movement_on+30;
+    td_act(i).pos = td_act(i).pos(idx,:);
+    td_act(i).vel_0_5 = td_act(i).vel_0_5(idx,:);
+    td_act(i).vel = td_act(i).vel(idx,:);
+    td_act(i).speed = td_act(i).speed(idx,:);
+    td_act(i).force = td_act(i).force(idx,:);
+    td_act(i).S1_spikes = td_act(i).S1_spikes(idx,:);
+
+end
+
+td_bump = getPowerTD(td_bump,srParams);
+
+for i = 1:numel(td_bump)
+    idx = td_bump(i).idx_bumpTime-2:td_bump(i).idx_bumpTime+12;
+    td_bump(i).pos = td_bump(i).pos(idx,:);
+    td_bump(i).vel_0_5 = td_bump(i).vel_0_5(idx,:);
+    td_bump(i).vel = td_bump(i).vel(idx,:);
+    td_bump(i).speed = td_bump(i).speed(idx,:);
+    td_bump(i).force = td_bump(i).force(idx,:);
+    td_bump(i).S1_spikes = td_bump(i).S1_spikes(idx,:);
+    
+end
+
+td_comb = getPowerTD(td_comb,srParams);
+for i = 1:numel(td_comb)
+    idx = td_comb(i).idx_bumpTime-2:td_comb(i).idx_bumpTime+12;
+    td_comb(i).pos = td_comb(i).pos(idx,:);
+    td_comb(i).vel_0_5 = td_comb(i).vel_0_5(idx,:);
+    td_comb(i).vel = td_comb(i).vel(idx,:);
+    td_comb(i).speed = td_comb(i).speed(idx,:);
+    td_comb(i).force = td_comb(i).force(idx,:);
+    td_comb(i).S1_spikes = td_comb(i).S1_spikes(idx,:);
+end
+
+
+%% Encoders
+for model = 1:3
+    
+    switch model
+        case 1
+            trial_data = td_act;
+%             for i = 1:numel(trial_data)
+%                 idx = trial_data(i).idx_goCueTime+16:trial_data(i).idx_goCueTime+30;
+%                 trial_data(i).pos = trial_data(i).pos(idx,:);
+%                 trial_data(i).vel = trial_data(i).vel(idx,:);
+%                 trial_data(i).S1_spikes = trial_data(i).S1_spikes(idx,:);
+%             end
+        case 2
+            trial_data = td_bump;
+%             for i = 1:numel(trial_data)
+%                 idx = trial_data(i).idx_bumpTime-2:trial_data(i).idx_bumpTime+12;
+%                 trial_data(i).pos = trial_data(i).pos(idx,:);
+%                 trial_data(i).vel = trial_data(i).vel(idx,:);
+%                 trial_data(i).S1_spikes = trial_data(i).S1_spikes(idx,:);
+%             end
+        case 3
+            trial_data = td_comb;
+%             for i = 1:numel(trial_data)
+%                 idx = trial_data(i).idx_bumpTime-2:trial_data(i).idx_bumpTime+12;
+%                 trial_data(i).pos = trial_data(i).pos(idx,:);
+%                 trial_data(i).vel = trial_data(i).vel(idx,:);
+%                 trial_data(i).S1_spikes = trial_data(i).S1_spikes(idx,:);
+%             end
+    end
+    
+    nTrials = numel(trial_data);
+    trials = 1:nTrials;
+    randTrials = randperm(nTrials);
+    nFolds = 5;
+    blockSize = ceil(nTrials/nFolds);
+    test_out = [];
+    
+    for fold = 1:nFolds
+        disp(['Now performing fold ' num2str(fold) ' out of ' num2str(nFolds)])
+        blockIdx = (fold-1)*blockSize < trials & fold*blockSize >= trials;
+        train_idx = randTrials(~blockIdx);
+        test_idx = randTrials(blockIdx);
+        
+        modelParams.in_signals = {'pos','all';'vel','all'};
+        
+        td_train = trial_data(train_idx);
+        td_test{fold} = trial_data(test_idx);
+        
+        modelParams.model_name = modelNames{model};
+        modelParams.model_type = 'glm';
+        modelParams.out_signals = {'S1_spikes','all'};
+        [td_train, model_info(model)] = getModel(td_train,modelParams);
+        td_test{fold} = getModel(td_test{fold}, model_info(model));
+        
+        %Evaluate models
+        modelParams.eval_metric = 'pr2';
+        modelParams.model_name = modelNames{model};
+        test(model,fold,:) = evalModel(td_test{fold},modelParams);
+    end
+        train(model,:) = evalModel(td_train,modelParams);
+end
+
+figure; hold on; plot(squeeze(mean(test(1,:,:))),squeeze(mean(test(2,:,:))),'.'); plot(0:1,0:1)
+xlabel('active reaches'), ylabel('center-hold bumps')
+figure; hold on; plot(squeeze(mean(test(1,:,:))),squeeze(mean(test(3,:,:))),'.'); plot(0:1,0:1)
+xlabel('active reaches'), ylabel('bump during reach')
+figure; hold on; plot(squeeze(mean(test(2,:,:))),squeeze(mean(test(3,:,:))),'.'); plot(0:1,0:1)
+xlabel('center-hold bumps'), ylabel('bump during reach')
+
+% Evaluate models across contexts
+clear modelParams;
+modelParams.in_signals = {'pos','all';'vel','all','force','all'};
+modelParams.model_type = 'glm';
+modelParams.out_signals = {'S1_spikes','all'};
+modelParams.eval_metric = 'pr2';
+
+%Act2comb
+modelParams.model_name = 'act2comb';
+[~, model_info_act2comb] = getModel(td_act,modelParams);
+td_test_act2comb = getModel(td_comb,model_info_act2comb);
+test_act2comb = evalModel(td_test_act2comb,modelParams);
+
+figure; hold on; plot(squeeze(mean(test(3,:,:))),test_act2comb(:,:),'.'); plot(0:1,0:1)
+xlabel('bumps during reach'), ylabel('bumps during reach (trained on act)')
+
+%Act2bump
+modelParams.model_name = 'act2bump';
+[~, model_info_act2bump] = getModel(td_act,modelParams);
+td_test_act2bump = getModel(td_bump,model_info_act2bump);
+test_act2bump = evalModel(td_test_act2bump,modelParams);
+
+figure; hold on; plot(squeeze(mean(test(2,:,:))),test_act2bump(:,:),'.'); plot(0:1,0:1)
+xlabel('bumps'), ylabel('bumps (trained on act)')
+
+%Bump2comb
+modelParams.model_name = 'bump2comb';
+[~, model_info_bump2comb] = getModel(td_bump,modelParams);
+td_test_bump2comb = getModel(td_comb,model_info_bump2comb);
+test_bump2comb = evalModel(td_test_bump2comb,modelParams);
+
+figure; hold on; plot(squeeze(mean(test(3,:,:))),test_bump2comb(:,:),'.'); plot(0:1,0:1)
+xlabel('bumps during reach'), ylabel('bumps during reach (trained on bumps)')
+
+%bump2act
+modelParams.model_name = 'bump2act';
+[~, model_info_bump2act] = getModel(td_bump,modelParams);
+td_test_bump2act = getModel(td_act,model_info_bump2act);
+test_bump2act = evalModel(td_test_bump2act,modelParams);
+
+figure; hold on; plot(squeeze(mean(test(1,:,:))),test_bump2act(:,:),'.'); plot(0:1,0:1)
+xlabel('act'), ylabel('act (trained on bump)')
+
+
+
+%% Decoders
+% Train GLM decoder on comb data, try to decode act/pas data
+
+clear modelParams;
+modelParams.in_signals = {'S1_spikes','all'};
+modelParams.model_type = 'linmodel';
+modelParams.eval_metric = 'r2';
+
+%%% Kinematic decoders %%%
+modelParams.out_signals = {'vel_0_5',1:2;'vel','all'};
+
+
+% Decoder trained on movement bumps
+modelParams.model_name = 'pos_decoder_comb';
+[td_comb, decoder_comb_pos] = getModel(td_comb,modelParams); %Get model trained on comb data
+test_comb2comb_decoder_pos = evalModel(td_comb,modelParams); %Test model trained on comb data on comb data
+
+td_bump = getModel(td_bump,decoder_comb_pos);
+test_comb2pas_decoder_pos = evalModel(td_bump,modelParams);%Test model trained on comb data on pas data
+
+td_act = getModel(td_act,decoder_comb_pos);
+test_comb2act_decoder_pos = evalModel(td_act,modelParams);%Test model trained on comb data on act data
+
+
+% Decoder trained on active reaches
+modelParams.model_name = 'pos_decoder_act';
+[td_act, decoder_act_pos] = getModel(td_act,modelParams); %Get model trained on act data
+test_act2act_decoder_pos = evalModel(td_act,modelParams); %Test model trained on act data on act data
+
+td_bump = getModel(td_bump,decoder_act_pos);
+test_act2pas_decoder_pos = evalModel(td_bump,modelParams);%Test model trained on act data on pas data
+
+td_comb = getModel(td_comb,decoder_act_pos);
+test_act2comb_decoder_pos = evalModel(td_comb,modelParams);%Test model trained on act data on comb data
+
+% Decoder trained on center-hold bumps
+modelParams.model_name = 'pos_decoder_pas';
+[td_bump, decoder_pas_pos] = getModel(td_bump,modelParams); %Get model trained on pas data
+test_pas2pas_decoder_pos = evalModel(td_bump,modelParams); %Test model trained on pas data on pas data
+
+td_act = getModel(td_act,decoder_pas_pos);
+test_pas2act_decoder_pos = evalModel(td_act,modelParams);%Test model trained on pas data on act data
+
+td_comb = getModel(td_comb,decoder_pas_pos);
+test_pas2comb_decoder_pos = evalModel(td_comb,modelParams);%Test model trained on act data on comb data
+
+
+
+
+%% Plot decoder results
+% Active trials
+
+
+
+
+
+
+
+
+
+
