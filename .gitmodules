@@ -7,3 +7,9 @@
 [submodule "lib/neuron-table"]
 	path = lib/neuron-table
 	url = https://github.com/kylepblum/neuron-table.git
+[submodule "lib/macroscopic-muscle-model/macroscopic-muscle-model"]
+	path = lib/macroscopic-muscle-model/macroscopic-muscle-model
+	url = https://github.com/kylepblum/macroscopic-muscle-model.git
+[submodule "lib/circ-toolbox"]
+	path = lib/circ-toolbox
+	url = https://github.com/raeedcho/circ-toolbox
